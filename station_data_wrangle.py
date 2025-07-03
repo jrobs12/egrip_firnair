@@ -86,7 +86,7 @@ import scipy.stats as stats
 #switch working directory to the USRA_2025, this is specifically because my computer hates me
 cwd = os.getcwd()
 wd = 'C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Code'
-final_data_directory = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\Final\\co2\\"
+final_data_directory = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\Final\\"
 if cwd != wd:
     os.chdir(wd)
     
@@ -147,7 +147,7 @@ def make_data_file(alt_data, brw_data, sum_data, time, month, year):
     df["sum"] = 0
     
     for i, t in enumerate(df["date"]):
-        #grad the data at that specific date
+        #grab the data at that specific date
         alt_at_t = alt_data[alt_data["date"] == t]["value"].values
         brw_at_t = brw_data[brw_data["date"] == t]["value"].values
         sum_at_t = sum_data[sum_data["date"] == t]["value"].values
@@ -294,6 +294,8 @@ n_lines = 6
 
 colors = cmap(np.linspace(0,1,n_lines))
 #%% Get CO2 Data
+co2_path = final_data_directory+"co2\\"
+
 co2_alt_flask = pd.DataFrame( np.loadtxt(co2_files[0], usecols = gg_columns_flask), columns = 
                              ["year", "month", "value"])
 co2_alt_flask = clean_data(co2_alt_flask)
@@ -337,7 +339,7 @@ plt.ylabel("$CO_2$ concentration (ppm)")
 plt.title("Atmospheric Concentration of $CO_2$ in the High Arctic")
 plt.legend(title = "--Station--")
 
-plt.savefig(final_data_directory + "figure1.png")
+plt.savefig(co2_path + "figure1.png")
 #%% seasonal cycle of co2
 co2_seasonal = find_seasonal_cycle(co2_data)
 co2_seasonal_means = co2_seasonal.groupby("month").mean()
@@ -356,7 +358,7 @@ plt.ylabel("yearly anomaly (ppm)")
 plt.title("Seasonal Cycle of $CO_2$ at 3 stations in the High Arctic")
 plt.legend(loc = "lower left", title = "--Station--")
 
-plt.savefig(final_data_directory + "figure2.png")
+plt.savefig(co2_path + "figure2.png")
 #%% subtract the seasonal cycle from each station
 co2_data = subtract_seasonal_cycle(co2_data, co2_seasonal_means)
 plt.figure(3, clear = True)
@@ -369,7 +371,7 @@ plt.ylabel("concentration (ppm)")
 plt.title("Concentration of Atmospheric $CO_2$ in the High Arctic \n with the Seasonal Cycle Removed")
 plt.legend(title = "--Station--")
 
-plt.savefig(final_data_directory + "figure3.png")
+plt.savefig(co2_path + "figure3.png")
 #%% plot the ratio of each station against summit to find the ratio and offset
 co2_data_nona = co2_data.dropna()
 alt_regress = stats.linregress(co2_data_nona["sum_yearly"], co2_data_nona["alt_yearly"])
@@ -398,13 +400,13 @@ plt.annotate(f'ALERT : y = {round(alt_ratio,4)}x + {round(alt_offset,4)}', xy = 
 plt.annotate(f'BARROW : y = {round(brw_ratio,4)}x + {round(brw_offset,4)}', xy = (400,378), color = "k")
 
 plt.title("Regression of Summit Against Barrow and Alert")
-plt.savefig(final_data_directory+"figure4.png")
+plt.savefig(co2_path+"figure4.png")
 
 #%% Apply Offset and Ratio and Merge with NEEM
 
 co2_egrip = co2_data[["date", "alt", "brw", "sum"]].copy()
-co2_egrip["alt"] = co2_data["alt"]*alt_ratio #- alt_offset
-co2_egrip["brw"] = co2_data["brw"]*brw_ratio - brw_offset
+co2_egrip["alt"] = co2_data["alt"]*alt_regress.rvalue
+co2_egrip["brw"] = co2_data["brw"]*brw_regress.rvalue#brw_ratio - brw_offset
 
 co2_egrip["value"] = 0
 co2_egrip["std"] = 0 
@@ -429,7 +431,7 @@ plt.plot(co2_NEEM[co2_NEEM["date"] > 2000]["date"], co2_NEEM[co2_NEEM["date"] > 
          color = colors[5], label = "NEEM")
 
 plt.legend(title = "--station--")
-plt.savefig(final_data_directory+"figure5.png")
+plt.savefig(co2_path+"figure5.png")
 #%% plot the final dataset
 plt.figure(6, clear = True)
 plt.plot(co2_egrip_final["date"], co2_egrip_final["value"], color = colors[3])
@@ -443,8 +445,10 @@ plt.fill_between(co2_NEEM["date"], co2_NEEM["value"] - co2_NEEM["std"],
 plt.plot(co2_overlap["date"], co2_overlap["value"], color = colors[1])
 plt.fill_between(co2_overlap["date"], co2_overlap["value"] - co2_overlap["std"], 
                  co2_overlap["value"] + co2_overlap["std"], color = colors[1], label = "EGRIP", alpha = 0.5)
-plt.savefig(final_data_directory+"figure6.png")
+plt.savefig(co2_path+"figure6.png")
 #%% ########## CH4 DATA ##################
+ch4_path = final_data_directory + "ch4\\"
+
 ch4_alt_flask = pd.DataFrame( np.loadtxt(ch4_files[0], usecols = gg_columns_flask), columns = 
                              ["year", "month", "value"])
 ch4_alt_flask = clean_data(ch4_alt_flask)
@@ -469,45 +473,137 @@ ch4_sum_flask = clean_data(ch4_sum_flask)
 ch4_NEEM = pd.DataFrame( np.loadtxt(ch4_files[4], ), columns = 
                              ["date","value", "std"])
 
-#plot the co2 data
-plt.figure(2, clear = True)
 
-plt.plot(ch4_alt_flask["date"],ch4_alt_flask["value"], 
-         label = "ALT (flask)", color = colors[0])
-plt.plot(ch4_brw_flask["date"],ch4_brw_flask["value"], 
-         label = "BRW (flask)", color = colors[1])
-plt.plot(ch4_sum_flask["date"], ch4_sum_flask["value"], 
-         label = "SUM (flask)", color = colors[2])
-plt.plot(ch4_brw_insitu["date"], ch4_brw_insitu["value"], 
-         label = "BRW (insitu)", color = colors[3])
-plt.plot(ch4_NEEM["date"], ch4_NEEM["value"],
-         label = "NEEM", color = colors[4])
-plt.legend()
+#take mean of the brw data
+ch4_brw = pd.DataFrame((ch4_brw_flask["value"] + ch4_brw_insitu["value"])/2)
+ch4_brw["date"] = ch4_brw_flask["date"].values
+
+#%% make new dataframe and plot
+
+ch4_data = make_data_file(ch4_alt_flask, ch4_brw, ch4_sum_flask, ch4_brw_flask["date"], ch4_brw_flask["month"], ch4_brw_flask["year"])
+
+#plot the co2 data
+plt.figure(11, clear = True)
+
+plt.plot(ch4_data["date"], ch4_data["alt"], label = "alert", color = colors[0])
+plt.plot(ch4_data["date"], ch4_data["brw"], label = "barrow", color = colors[2])
+plt.plot(ch4_data["date"], ch4_data["sum"], label = "summit", color = colors[4])
+plt.legend(title = "--station--")
 
 plt.xlabel("Time")
 plt.ylabel("$CH_4$ concentration (ppt)")
 plt.title("Monthly Average Concentration of \n Methane in the High Arctic")
 
+plt.savefig(ch4_path + "figure1.png")
+#%% ch4_seasonal cycle
+ch4_seasonal = find_seasonal_cycle(ch4_data)
+ch4_seasonal_means = ch4_seasonal.groupby("month").mean()
+plt.figure(12, clear = True)
 
-#%% plot ch4 seasonal cycle
-plt.figure(10, clear = True)
-vmin = 2008.96
-vmax = 2025
-h = plt.scatter(ch4_alt_flask["month"], ch4_alt_flask["anom"], c = ch4_alt_flask["year"], cmap = cmap, marker = "o" ,
-            label = "alert", vmin = vmin, vmax = vmax)
-plt.scatter(ch4_brw_flask["month"], ch4_brw_flask["anom"], c = ch4_brw_flask["year"], cmap = cmap, marker = "v" ,
-            label = "barrow", vmin = vmin, vmax = vmax)
-plt.scatter(ch4_sum_flask["month"], ch4_sum_flask["anom"], c = ch4_sum_flask["year"], cmap = cmap, marker = "*" ,
-            label = "summit", vmin = vmin, vmax = vmax)
-plt.scatter(ch4_brw_insitu["month"], ch4_brw_insitu["anom"], c = ch4_brw_insitu["year"], cmap = cmap, marker = "s" ,
-            label = "barrow (insitu", vmin = vmin, vmax = vmax)
-cbar = plt.colorbar(h)
+#plot the mean seasonal cycle
+plt.plot(ch4_seasonal_means.index, ch4_seasonal_means["alt_anom"], color = colors[0], label = "alert")
+plt.plot(ch4_seasonal_means.index, ch4_seasonal_means["brw_anom"], color = colors[2], label = "barrow")
+plt.plot(ch4_seasonal_means.index, ch4_seasonal_means["sum_anom"], color = colors[4], label = "summit")
+#plot each individual point
+plt.scatter(ch4_seasonal["month"], ch4_seasonal["alt_anom"], color = colors[0], alpha = 0.5)
+plt.scatter(ch4_seasonal["month"], ch4_seasonal["brw_anom"], color = colors[2], alpha = 0.5)
+plt.scatter(ch4_seasonal["month"], ch4_seasonal["sum_anom"], color = colors[4], alpha = 0.5)
+
 plt.xlabel("month")
-plt.ylabel("anomaly (ppm)")
-plt.title("Seasonal Cycle of ch4")
-cbar.set_label("year")
+plt.ylabel("yearly anomaly (ppt)")
+plt.title("Seasonal Cycle of $CH_4$ at 3 stations in the High Arctic")
+plt.legend(loc = "lower left", title = "--Station--")
+
+plt.savefig(ch4_path + "figure2.png")
+
+#%%subtract seasonal cycle
+ch4_data = subtract_seasonal_cycle(ch4_data, ch4_seasonal_means)
+plt.figure(13, clear = True)
+
+plt.plot(ch4_data["date"], ch4_data["alt_yearly"], label = "alert", color = colors[0])
+plt.plot(ch4_data["date"], ch4_data["brw_yearly"], label = "barrow", color = colors[2])
+plt.plot(ch4_data["date"], ch4_data["sum_yearly"], label = "summit", color = colors[4])
+
+plt.xlabel("time")
+plt.ylabel("$Ch_4 concentration (ppt)$")
+plt.title("Monthly Concentration of $CH_4$ at 3 stations in the High Arctic \n with no Seasonal Cycle")
+plt.legend(loc = "lower left", title = "--Station--")
+
+plt.savefig(ch4_path + "figure3.png")
+#%%regression against summit
+ch4_data_nona = ch4_data.dropna()
+ch4_alt_regress = stats.linregress(ch4_data_nona["sum_yearly"], ch4_data_nona["alt_yearly"])
+ch4_brw_regress = stats.linregress(ch4_data_nona["sum_yearly"], ch4_data_nona["brw_yearly"])
+
+plt.figure(14, clear = True)
+h = plt.scatter(ch4_data["sum_yearly"], ch4_data["alt_yearly"], label = "alert", c = ch4_data["date"], alpha = 0.7)
+plt.scatter(ch4_data["sum_yearly"], ch4_data["brw_yearly"], label = "barrow", color = colors[2], alpha = 0.7)
+plt.colorbar(h)
+ch4_alert_line = ch4_data["sum_yearly"]*ch4_alt_regress.slope + ch4_alt_regress.intercept
+ch4_brw_line = ch4_data["sum_yearly"]*ch4_brw_regress.slope + ch4_brw_regress.intercept
+
+plt.plot(ch4_data["sum_yearly"], ch4_alert_line, color = colors[0])
+plt.plot(ch4_data["sum_yearly"], ch4_brw_line, color = colors[2])
+
+plt.xlabel("summit $CH_4$ (ppt)")
+plt.ylabel("other station's concentration (ppt)")
 plt.legend()
+
+plt.annotate(f'ALERT : y = {round(ch4_alt_ratio,4)}x + {round(ch4_alt_offset,4)}', xy = (1900,1860), color = "k")
+plt.annotate(f'BARROW : y = {round(ch4_brw_ratio,4)}x + {round(ch4_brw_offset,4)}', xy = (1900,1855), color = "k")
+
+plt.title("Regression of Summit Against Barrow and Alert")
+plt.savefig(ch4_path+"figure4.png")
+
+#%% apply ration and offsets
+ch4_egrip = ch4_data[["date", "alt", "brw", "sum"]].copy()
+ch4_egrip["alt"] = ch4_data["alt"]*ch4_alt_regress.rvalue
+ch4_egrip["brw"] = ch4_data["brw"]*ch4_alt_regress.rvalue
+
+ch4_egrip["value"] = 0
+ch4_egrip["std"] = 0 
+for i in ch4_egrip.index:
+    data_at_i = ch4_egrip.loc[i][stations]
+    
+    ch4_egrip.loc[i,"value"] = data_at_i.mean()
+    ch4_egrip.loc[i, "std"] = data_at_i.std()
+
+ch4_overlap = ch4_egrip[ch4_egrip["date"] <= end_time] 
+ch4_egrip = ch4_egrip[ch4_egrip["date"] > end_time] 
+ch4_egrip_final = pd.concat([ch4_NEEM, ch4_egrip[["date", "value", "std"]]]) #make the final dataset
+ch4_egrip_final.to_csv(final_data_directory+"SCENARIO_EGRIP18_CH4.csv")
+
+#plot the new data
+plt.figure(15, clear = True)
+
+plt.plot(ch4_egrip["date"], ch4_egrip["alt"], color = colors[0], label = "alert")
+plt.plot(ch4_egrip["date"], ch4_egrip["brw"], color = colors[2], label = "barrow")
+plt.plot(ch4_egrip["date"], ch4_egrip["sum"], color = colors[4], label = "summit")
+plt.plot(ch4_NEEM[ch4_NEEM["date"] > 2000]["date"], ch4_NEEM[ch4_NEEM["date"] > 2000]["value"], 
+         color = colors[5], label = "NEEM")
+
+plt.legend(title = "--station--")
+plt.savefig(ch4_path+"figure5.png")
+
+#%% plot the final dataset
+plt.figure(16, clear = True)
+plt.plot(ch4_egrip_final["date"], ch4_egrip_final["value"], color = colors[3])
+plt.fill_between(ch4_egrip_final["date"], ch4_egrip_final["value"] - ch4_egrip_final["std"], 
+                 ch4_egrip_final["value"] + ch4_egrip_final["std"], color = colors[3], label = "EGRIP", alpha = 0.5)
+plt.xlim(1995)
+plt.ylim(1760, 1950)
+plt.plot(ch4_data["date"], ch4_data["sum"])
+plt.plot(ch4_NEEM["date"], ch4_NEEM["value"], color = colors[5])
+plt.fill_between(ch4_NEEM["date"], ch4_NEEM["value"] - ch4_NEEM["std"], 
+                 ch4_NEEM["value"] + ch4_NEEM["std"], color = colors[5], label = "NEEM", alpha = 0.5)
+
+plt.plot(ch4_overlap["date"], ch4_overlap["value"], color = colors[1])
+plt.fill_between(ch4_overlap["date"], ch4_overlap["value"] - ch4_overlap["std"], 
+                 ch4_overlap["value"] + ch4_overlap["std"], color = colors[1], label = "EGRIP", alpha = 0.5)
+plt.legend()
+plt.savefig(ch4_path+"figure6.png")
 #%% Get Sf6 Data
+sf6_path = final_data_directory+"sf6\\"
 sf6_alt_flask = pd.DataFrame( np.loadtxt(sf6_files[2], usecols = gg_columns_flask), columns = 
                              ["year", "month", "value"])
 sf6_alt_flask = clean_data(sf6_alt_flask)
@@ -536,48 +632,92 @@ sf6_sum_insitu = clean_data(sf6_sum_insitu)
 sf6_NEEM = pd.DataFrame( np.loadtxt(sf6_files[1]), columns = 
                              ["date","value", "std"])
 
-#plot the co2 data
-plt.figure(3, clear = True)
+#mix barrow data together
+sf6_brw = pd.DataFrame((sf6_brw_flask["value"] + sf6_brw_insitu["value"])/2)
+sf6_brw["date"] = sf6_brw_flask["date"]
+sf6_brw.loc[[1,88,174,175], "value"] = sf6_brw_flask["value"][[1,88,174,175]]
 
-plt.plot(sf6_alt_flask["date"],sf6_alt_flask["value"], 
-         label = "ALT (flask)", color = colors[0])
-plt.plot(sf6_brw_flask["date"],sf6_brw_flask["value"], 
-         label = "BRW (flask)", color = colors[1])
-plt.plot(sf6_sum_flask["date"], sf6_sum_flask["value"], 
-         label = "SUM (flask)", color = colors[2])
-plt.plot(sf6_brw_insitu["date"], sf6_brw_insitu["value"], 
-         label = "BRW (insitu)", color = colors[3])
-plt.plot(sf6_NEEM["date"], sf6_NEEM["value"],
-         label = "NEEM", color = colors[4])
-plt.plot(sf6_sum_insitu["date"], sf6_sum_insitu["value"],
-         label = "SUMMIT (insitu)", color = colors[5])
+#mix the summit data together
+sf6_sum = sf6_sum_flask.copy()[["date", "value"]]
+sf6_sum.loc[71:191, "value"] = (sf6_sum_insitu["value"][90:211].values + sf6_sum_flask["value"][71:192].values)/2
+
+#%% make a new datafile and plot the raw data
+sf6_data = make_data_file(sf6_alt_flask, sf6_brw, sf6_sum, sf6_brw["date"], sf6_brw_flask["month"], sf6_brw_flask["year"])
+
+plt.figure(21, clear = True)
+plt.plot(sf6_data["date"], sf6_data["alt"], color = colors[0], label = "alert")
+plt.plot(sf6_data["date"], sf6_data["brw"], color = colors[2], label = "barrow")
+plt.plot(sf6_data["date"], sf6_data["sum"], color = colors[4], label = "summit")
 plt.legend()
 
-plt.xlabel("Time")
-plt.ylabel("$SF_6$ concentration (ppt)")
-plt.title("Monthly Average Concentration of \n $SF_6$ in the High Arctic")
-#%% seasonal cycle of sf6
-plt.figure(11, clear = True)
-vmin = 2008.96
-vmax = 2025
-h = plt.scatter(sf6_alt_flask["month"], sf6_alt_flask["anom"], c = sf6_alt_flask["year"], cmap = cmap, marker = "o" ,
-            label = "alert", vmin = vmin, vmax = vmax)
-plt.scatter(sf6_brw_flask["month"], sf6_brw_flask["anom"], c = sf6_brw_flask["year"], cmap = cmap, marker = "v" ,
-            label = "barrow", vmin = vmin, vmax = vmax)
-plt.scatter(sf6_sum_flask["month"], sf6_sum_flask["anom"], c = sf6_sum_flask["year"], cmap = cmap, marker = "*" ,
-            label = "summit", vmin = vmin, vmax = vmax)
-plt.scatter(sf6_brw_insitu["month"], sf6_brw_insitu["anom"], c = sf6_brw_insitu["year"], cmap = cmap, marker = "s" ,
-            label = "barrow (insitu", vmin = vmin, vmax = vmax)
-plt.scatter(sf6_sum_insitu["month"], sf6_sum_insitu["anom"], c = sf6_sum_insitu["year"], cmap = cmap, marker = "^" ,
-            label = "summit (insitu", vmin = vmin, vmax = vmax)
-cbar = plt.colorbar(h)
+plt.xlabel("time")
+plt.ylabel("$SF_6 $ concentration (ppt)")
+plt.title("Monthly Concentration of $SF_6$ at 3 Stations \n in the High Arctic")
+plt.savefig(sf6_path+"figure1.png")
+#%%find the seasonal cycle of sf6
+sf6_seasonal = find_seasonal_cycle(sf6_data)
+sf6_seasonal_means = sf6_data.groupby("month").mean()
+
+plt.figure(22, clear = True)
+#plot the mean seasonal cycle
+plt.plot(sf6_seasonal_means.index, sf6_seasonal_means["alt_anom"], color = colors[0], label = "alert")
+plt.plot(sf6_seasonal_means.index, sf6_seasonal_means["brw_anom"], color = colors[2], label = "barrow")
+plt.plot(sf6_seasonal_means.index, sf6_seasonal_means["sum_anom"], color = colors[4], label = "summit")
+#plot each individual point
+plt.scatter(sf6_seasonal["month"], sf6_seasonal["alt_anom"], color = colors[0], alpha = 0.5)
+plt.scatter(sf6_seasonal["month"], sf6_seasonal["brw_anom"], color = colors[2], alpha = 0.5)
+plt.scatter(sf6_seasonal["month"], sf6_seasonal["sum_anom"], color = colors[4], alpha = 0.5)
+
 plt.xlabel("month")
-plt.ylabel("anomaly (ppm)")
-plt.title("Seasonal Cycle of sf6")
-cbar.set_label("year")
-plt.legend()
-#%% CCL4
+plt.ylabel("yearly anomaly (ppt)")
+plt.title("Seasonal Cycle of $SF_6$ at 3 stations in the High Arctic")
+plt.legend(loc = "lower left", title = "--Station--")
 
+plt.savefig(sf6_path + "figure2.png")
+
+#from the looks of the seasonal cycle and the notes from the east grip report, we don't have to do anything to
+#this data (i.e remove the seasonal cycle since it doesn't really appear to have one) but we can check the 
+#correlation anyway
+
+#%% correlation between summit and other stations
+sf6_data_nona = sf6_data.dropna()
+sf6_alt_regress = stats.linregress(sf6_data_nona["sum"], sf6_data_nona["alt"])
+sf6_brw_regress = stats.linregress(sf6_data_nona["sum"], sf6_data_nona["brw"])
+# Rs are around 1, and the intercepts are very close to 0!
+#these look really good so we can just skip the next steps and jump straight to mixing the data together
+#%% mix all of the data together and merge with NEEM
+sf6_egrip = sf6_data[["date", "alt", "brw", "sum"]].copy()
+end_time_sf6 = 2010.29
+sf6_egrip["value"] = 0
+sf6_egrip["std"] = 0 
+for i in sf6_egrip.index:
+    data_at_i = sf6_egrip.loc[i][stations]
+    
+    sf6_egrip.loc[i,"value"] = data_at_i.mean()
+    sf6_egrip.loc[i, "std"] = data_at_i.std()
+
+sf6_overlap = sf6_egrip[sf6_egrip["date"] <= end_time_sf6] 
+sf6_egrip = sf6_egrip[sf6_egrip["date"] > end_time_sf6] 
+sf6_egrip_final = pd.concat([sf6_NEEM, sf6_egrip[["date", "value", "std"]]]) #make the final dataset
+sf6_egrip_final.to_csv(final_data_directory+"SCENARIO_EGRIP18_SF6.csv")
+
+#plot the final dataset
+plt.figure(26, clear = True)
+plt.plot(sf6_egrip_final["date"], sf6_egrip_final["value"], color = colors[3])
+plt.fill_between(sf6_egrip_final["date"], sf6_egrip_final["value"] - sf6_egrip_final["std"], 
+                 sf6_egrip_final["value"] + sf6_egrip_final["std"], color = colors[3], label = "EGRIP", alpha = 0.5)
+plt.xlim(1995)
+plt.plot(sf6_NEEM["date"], sf6_NEEM["value"], color = colors[5])
+plt.fill_between(sf6_NEEM["date"], sf6_NEEM["value"] - sf6_NEEM["std"], 
+                 sf6_NEEM["value"] + sf6_NEEM["std"], color = colors[5], label = "NEEM", alpha = 0.5)
+
+plt.plot(sf6_overlap["date"], sf6_overlap["value"], color = colors[1])
+plt.fill_between(sf6_overlap["date"], sf6_overlap["value"] - sf6_overlap["std"], 
+                 sf6_overlap["value"] + sf6_overlap["std"], color = colors[1], label = "EGRIP", alpha = 0.5)
+plt.legend()
+plt.savefig(sf6_path+"figure6.png")
+#%% CCL4
+ccl4_path = final_data_directory + "ccl4\\"
 ccl4_brw_insitu = pd.DataFrame( np.loadtxt(ccl4_files[0], usecols= hal_columns), 
                                columns = ["year", "month", "value", "unc", "std"])
 ccl4_brw_insitu = clean_data(ccl4_brw_insitu)
@@ -586,40 +726,99 @@ ccl4_sum_insitu = pd.DataFrame( np.loadtxt(ccl4_files[2], usecols = hal_columns)
                              ["year", "month", "value", "unc", "std"])
 ccl4_sum_insitu = clean_data(ccl4_sum_insitu)
 
+no_alt = pd.DataFrame(ccl4_brw_insitu["value"]*np.nan)
+no_alt["date"] = ccl4_brw_insitu["date"]
 
 ccl4_NEEM = pd.DataFrame( np.loadtxt(ccl4_files[1], ), columns = 
                              ["date","value", "std"])
 
-#plot the co2 data
-plt.figure(4, clear = True)
+#%%make a new dataframe and plot the raw data
+ccl4_data = make_data_file(no_alt, ccl4_brw_insitu, ccl4_sum_insitu, 
+                           ccl4_brw_insitu["date"], ccl4_brw_insitu["month"], ccl4_brw_insitu["year"])
 
-plt.plot(ccl4_brw_insitu["date"], ccl4_brw_insitu["value"], 
-         label = "BRW (insitu)", color = colors[3])
-plt.plot(ccl4_NEEM["date"], ccl4_NEEM["value"],
-         label = "NEEM", color = colors[4])
-plt.plot(ccl4_sum_insitu["date"], ccl4_sum_insitu["value"],
-         label = "SUMMIT (insitu)", color = colors[5])
+plt.figure(31, clear = True)
+plt.plot(ccl4_data["date"], ccl4_data["brw"], label = "barrow", color = colors[2])
+plt.fill_between(ccl4_brw_insitu["date"], ccl4_brw_insitu["value"] - ccl4_brw_insitu["std"], 
+                 ccl4_brw_insitu["value"] + ccl4_brw_insitu["std"], color = colors[2], alpha = 0.5)
+plt.plot(ccl4_data["date"], ccl4_data["sum"], label = "summit", color = colors[4])
+plt.fill_between(ccl4_sum_insitu["date"], ccl4_sum_insitu["value"] - ccl4_sum_insitu["std"], 
+                 ccl4_sum_insitu["value"] + ccl4_sum_insitu["std"], color = colors[4], alpha = 0.5)
 plt.legend()
 
-plt.xlabel("Time")
-plt.ylabel("$CCL_4$ concentration (ppt)")
-plt.title("Monthly Average Concentration of \n $CCL_4$ in the High Arctic")
+plt.xlabel("time")
+plt.ylabel("Concentration (ppt)")
+plt.title("Monthly Concentration of $CCl_4$ \n at 2 Stations in the High Arctic")
+plt.savefig(ccl4_path+"figure1.png")
 
 #%% seasonal cycle of ccl4
-plt.figure(12, clear = True)
-vmin = 2008.96
-vmax = 2025
-h = plt.scatter(ccl4_brw_insitu["month"], ccl4_brw_insitu["anom"], c = ccl4_brw_insitu["year"], cmap = cmap, marker = "s" ,
-            label = "barrow (insitu", vmin = vmin, vmax = vmax)
-plt.scatter(ccl4_sum_insitu["month"], ccl4_sum_insitu["anom"], c = ccl4_sum_insitu["year"], cmap = cmap, marker = "^" ,
-            label = "summit (insitu", vmin = vmin, vmax = vmax)
-cbar = plt.colorbar(h)
-plt.xlabel("month")
-plt.ylabel("anomaly (ppm)")
-plt.title("Seasonal Cycle of ccl4")
-cbar.set_label("year")
+ccl4_seasonal = find_seasonal_cycle(ccl4_data)
+ccl4_seasonal_means = ccl4_seasonal.groupby("month").mean()
+
+plt.figure(32, clear = True)
+plt.plot(ccl4_seasonal_means.index, ccl4_seasonal_means["brw_anom"], label = "barrow", color = colors[2])
+plt.plot(ccl4_seasonal_means.index, ccl4_seasonal_means["sum_anom"], label = "summit", color = colors[4])
 plt.legend()
+plt.scatter(ccl4_seasonal["month"], ccl4_seasonal["brw_anom"], label = "barrow", color = colors[2], alpha = 0.7)
+plt.scatter(ccl4_seasonal["month"], ccl4_seasonal["sum_anom"], label = "summit", color = colors[4], alpha = 0.7)
+
+plt.xlabel("month")
+plt.ylabel("Yearly Anaomaly (ppt)")
+plt.title("Seasonal Cycle of CCL$_4$ in the High Arctic")
+plt.savefig(ccl4_path+"figure2.png")
+#im skeptical of this seasonal cycle too... so let's check the correlation with no removal and see what it looks like
+
+#%% correlation between summit and barrow
+ccl4_data_nona = ccl4_data[["sum", "brw"]].dropna() #only need these and if we drop all nans the 
+#whole dataset goes (b/c of the alert column)
+ccl4_brw_regress = stats.linregress(ccl4_data_nona["sum"], ccl4_data_nona["brw"]) #R = 0.9918 
+ccl4_brw_line = ccl4_data["sum"]*ccl4_brw_regress.slope + ccl4_brw_regress.intercept
+#this isn't the perfect one that we want so we'll have to correct
+plt.figure(34, clear = True)
+plt.plot(ccl4_data["sum"], ccl4_brw_line, color = colors[2])
+plt.scatter(ccl4_data["sum"], ccl4_data["brw"], color = colors[2], alpha = 0.5)
+plt.savefig(ccl4_path+"figure4.png")
+
+plt.xlabel("summit cocentration (ppt)")
+plt.ylabel("barrow concentration (ppt)")
+plt.title("correlation between summit and barrow for $CCL_4$")
+plt.annotate(f'y = {round(ccl4_brw_regress.slope,4)}x + {round(ccl4_brw_regress.intercept,4)}', (86,83), color = colors[2])
+#%%correct and look at the fit
+end_time_ccl4 = 2009.21
+ccl4_egrip = ccl4_data[["date", "brw", "sum"]]
+ccl4_egrip["value"] = 0
+ccl4_egrip["std"] = 0
+
+ccl4_egrip["brw"] = ccl4_egrip["brw"]*ccl4_brw_regress.rvalue
+
+for i in ccl4_egrip.index:
+    data_at_i = ccl4_egrip.loc[i][["brw", "sum"]]
+    
+    ccl4_egrip.loc[i,"value"] = data_at_i.mean()
+    ccl4_egrip.loc[i, "std"] = data_at_i.std()
+
+ccl4_overlap = ccl4_egrip[ccl4_egrip["date"] <= end_time_ccl4] 
+ccl4_egrip = ccl4_egrip[ccl4_egrip["date"] > end_time_ccl4] 
+ccl4_egrip_final = pd.concat([ccl4_NEEM, ccl4_egrip[["date", "value", "std"]]]) #make the final dataset
+ccl4_egrip_final.to_csv(final_data_directory+"SCENARIO_EGRIP18_CCL4.csv")
+
+#%%plot the final dataset
+#plot the final dataset
+plt.figure(36, clear = True)
+plt.plot(ccl4_egrip_final["date"], ccl4_egrip_final["value"], color = colors[3])
+plt.fill_between(ccl4_egrip_final["date"], ccl4_egrip_final["value"] - ccl4_egrip_final["std"], 
+                 ccl4_egrip_final["value"] + ccl4_egrip_final["std"], color = colors[3], label = "EGRIP", alpha = 0.5)
+plt.xlim(1995)
+plt.plot(ccl4_NEEM["date"], ccl4_NEEM["value"], color = colors[5])
+plt.fill_between(ccl4_NEEM["date"], ccl4_NEEM["value"] - ccl4_NEEM["std"], 
+                 ccl4_NEEM["value"] + ccl4_NEEM["std"], color = colors[5], label = "NEEM", alpha = 0.5)
+
+plt.plot(ccl4_overlap["date"], ccl4_overlap["value"], color = colors[1])
+plt.fill_between(ccl4_overlap["date"], ccl4_overlap["value"] - ccl4_overlap["std"], 
+                 ccl4_overlap["value"] + ccl4_overlap["std"], color = colors[1], label = "EGRIP", alpha = 0.5)
+plt.legend()
+plt.savefig(ccl4_path+"figure6.png")
 #%% CH3CCL3
+ch3ccl3_path = final_data_directory + "ch3ccl3\\"
 
 ch3ccl3_brw_insitu = pd.DataFrame( np.loadtxt(ch3ccl3_files[0], usecols= hal_columns), 
                                columns = ["year", "month", "value", "unc", "std"])
@@ -640,36 +839,47 @@ ch3ccl3_sum_insitu = clean_data(ch3ccl3_sum_insitu)
 ch3ccl3_NEEM = pd.DataFrame( np.loadtxt(ch3ccl3_files[3], ), columns = 
                              ["date","value", "std"])
 
-#plot the co2 data
-plt.figure(5, clear = True)
+#%% make a new datafile
+ch3ccl3_data = make_data_file(no_alt, ch3ccl3_brw_insitu, ch3ccl3_sum_insitu, 
+                              ch3ccl3_brw_insitu["date"], ch3ccl3_brw_insitu["month"], ch3ccl3_brw_insitu["year"])
 
-plt.plot(ch3ccl3_brw_insitu["date"], ch3ccl3_brw_insitu["value"], 
-         label = "BRW (insitu)", color = colors[3])
-plt.plot(ch3ccl3_NEEM["date"], ch3ccl3_NEEM["value"],
-         label = "NEEM", color = colors[4])
-plt.plot(ch3ccl3_sum_insitu["date"], ch3ccl3_sum_insitu["value"],
-         label = "SUMMIT (insitu)", color = colors[5])
+plt.figure(41, clear = True)
+plt.plot(ch3ccl3_data["date"], ch3ccl3_data["brw"], label = "barrow", color = colors[2])
+
+plt.fill_between(ch3ccl3_brw_insitu["date"], ch3ccl3_brw_insitu["value"] - ch3ccl3_brw_insitu["std"], 
+                 ch3ccl3_brw_insitu["value"] + ch3ccl3_brw_insitu["std"], color = colors[2], alpha = 0.5)
+
+plt.plot(ch3ccl3_data["date"], ch3ccl3_data["sum"], label = "summit", color = colors[4])
+
+plt.fill_between(ch3ccl3_sum_insitu["date"], ch3ccl3_sum_insitu["value"] - ch3ccl3_sum_insitu["std"], 
+                 ch3ccl3_sum_insitu["value"] + ch3ccl3_sum_insitu["std"], color = colors[4], alpha = 0.5)
+
+plt.xlabel("time")
+plt.ylabel("concentration (ppt)")
+plt.title("Monthly Concentration of $CH_3CCl_3$ \n in the High Arctic")
+plt.savefig(ch3ccl3_path + "figure1.png")
+
+#since there is poor quality data from summit we don't use it for this particular species
+
+#%% add the barrow data to the NEEM file and look at the final dataset
+ch3ccl3_egrip = ch3ccl3_data[["date","brw"]][110:]
+ch3ccl3_egrip["std"] = 0
+ch3ccl3_egrip.loc[110:, "std"] = ch3ccl3_brw_insitu["std"][110:]
+ch3ccl3_egrip = ch3ccl3_egrip.rename(columns = {"brw":"value"})
+ch3ccl3_egrip_final = pd.concat([ch3ccl3_NEEM, ch3ccl3_egrip])
+ch3ccl3_egrip_final.to_csv(final_data_directory+"SCENARIO_EGRIP18_CH3CCL3.csv")
+
+plt.figure(46, clear = True)
+plt.plot(ch3ccl3_egrip_final["date"], ch3ccl3_egrip_final["value"], color = colors[3])
+plt.fill_between(ch3ccl3_egrip_final["date"], ch3ccl3_egrip_final["value"] - ch3ccl3_egrip_final["std"], 
+                 ch3ccl3_egrip_final["value"] + ch3ccl3_egrip_final["std"], color = colors[3], label = "EGRIP", alpha = 0.5)
+plt.xlim(1995)
+plt.plot(ch3ccl3_NEEM["date"], ch3ccl3_NEEM["value"], color = colors[5])
+plt.fill_between(ch3ccl3_NEEM["date"], ch3ccl3_NEEM["value"] - ch3ccl3_NEEM["std"], 
+                 ch3ccl3_NEEM["value"] + ch3ccl3_NEEM["std"], color = colors[5], label = "NEEM", alpha = 0.5)
+
 plt.legend()
-
-plt.xlabel("Time")
-plt.ylabel("$CH_3 CCl_3$ concentration (ppt)")
-plt.title("Monthly Average Concentration of \n $CH_3 CCl_3$ in the High Arctic")
-
-#%% seasonal cycle of ch3ccl3
-
-plt.figure(13, clear = True)
-vmin = 2008.96
-vmax = 2025
-h = plt.scatter(ch3ccl3_brw_insitu["month"], ch3ccl3_brw_insitu["anom"], c = ch3ccl3_brw_insitu["year"], cmap = cmap, marker = "s" ,
-            label = "barrow (insitu", vmin = vmin, vmax = vmax)
-plt.scatter(ch3ccl3_sum_insitu["month"], ch3ccl3_sum_insitu["anom"], c = ch3ccl3_sum_insitu["year"], cmap = cmap, marker = "^" ,
-            label = "summit (insitu", vmin = vmin, vmax = vmax)
-cbar = plt.colorbar(h)
-plt.xlabel("month")
-plt.ylabel("anomaly (ppm)")
-plt.title("Seasonal Cycle of ch3ccl3")
-cbar.set_label("year")
-plt.legend()
+plt.savefig(ch3ccl3_path+"figure6.png")
 
 #%% CFC11
 cfc11_brw_insitu = pd.DataFrame(np.loadtxt(cfc11_files[0], usecols = hal_columns), columns = 
