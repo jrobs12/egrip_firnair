@@ -3,6 +3,76 @@
 Created on Wed Jul 16 15:49:29 2025
 
 @author: jrobs
+
+Introduction
+------------------------------------------
+Final Workflow for correcting the Atmospheric Histories to use as a Firn Model Input. This notebook works to
+extend the dataset used for the NEEM analysis in 2009. While the workflow is optimised for the EGRIP 2018 Greenland 
+Project, the codecan be easily modified to be used for the Muller Project in 2025. The same workflow is used for all 
+species, with some exceptions where data is missing. These exceptions are documented in the report as well as in comments
+in the code itself. We found that for CFC113 there existed a gap between 2014 and 2016 in the monthly resolution data
+which we filled with weekly resolution data re-sampled to monthly.
+
+Gathered Data
+-------------------------------------------
+
+Data is gathered from the NOAA database from the available arctic stations in monthly resolution; alert (ALT), barrow 
+(BRW) and summmit (SUM). Alert and Barrow are corrected to become an inferred Summit dataset, since Summit is located 
+nearest the EGRIP sampling site. We used both flask and insitu data since it showed to be very similar. 
+
+Workflow Breakdown
+--------------------------------------------
+
+(1) Data is read in and if applicable, in situ and flask data are merged. We start the data at 2000 to allow for adequete
+    overlap between the new data and NEEM.
+    
+(2) We take a 12 month rolling mean to removed the seasonal cycle of the data.
+
+(3) We subtract the rolling mean and find the mean seasonal cycle at each station in order to add this back in later
+    steps
+    
+(4) Calculate the offset between either Barrow and Alert and the reference station (Summit), this is done by looking
+    at the mean difference between the smoothed data (eg. rolling mean at sum - rolling mean at alt). If the found 
+    offset is no better than 0 we take an offset of 0.
+
+(5) Calculate the ratio between the stations and reference by minimising the least squares regression and finding the 
+    geometric slope between the datasets. If this slope is not significantly different than 1 at the 0.01 level, we take 
+    a slope of 1.
+    
+(6) Apply the coefficients to the station data and merge with the NEEM dataset. Calculate the uncertainty in our new
+    measurements as the mean standard deviation between the residuals of the new corrected datasets.
+    
+    
+Figures
+-------------------------------------------
+The code will produce 7-8 figures for each species. If there exists both flask and insitu data for a particular species
+the code will plot both types of data to ensure that they are sufficiently similar. 
+
+figure 1:
+    Raw data at each station with the 12 month rolling mean.
+
+figure 2:
+    mean seasonal cycle at each station with the actual values scattered. We look for if there are big differences in
+    seasonal cycle between stations at different parts of the year.
+
+figure 3:
+    The residuals between the reference station and the other stations. Both the residuals between the rolling means
+    and the residuals between the de-trended (straight) data are plotted. We are looking for a resiudal with no trend
+    ideally centred around 0 .
+    
+figure 4:
+    Plot the smooth data against the reference station. Line of best fit is printed on the plot and both regression
+    lines are plotted (a v b and b v a)
+    
+figure 5:
+    The corrected data plotted with the NEEM dataset and Summit. Assess the overlap between the datasets and make sure
+    that they look the same.
+
+figure 6:
+    final dataset from 2000 to 2019, check that the uncertainties are okay and that the dataset has no clear jump between
+    the NEEM time and the new data.
+
+
 """
 #import packages
 import numpy as np
@@ -15,9 +85,10 @@ import seaborn as sns
 import os
 import glob
 import scipy.interpolate as interp
-import scipy.linalg as alg
+import scipy.linalg as alg #for linear regression
 import datetime
-
+import scipy.stats as stats
+import warnings
 #switch working directory to the USRA_2025, this is specifically because my computer hates me
 cwd = os.getcwd()
 wd = 'C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Code'
@@ -30,7 +101,12 @@ if cwd != wd:
 gg_columns_flask = (1,2,3) #the first column is the station_id and throws an error when read-in
 gg_columns_insitu = (1,2,10,11) #this data is in a different format, grab the same columns + the standard deviations
 hal_columns = (0,1,2,3,4) # for the halocompounds since those are also in a different form
-#%% define functions
+
+#the only warnings that I'm getting are from pandas and I can't get rid of them no matter what I try
+warnings.filterwarnings("ignore", category=UserWarning)
+
+
+#%% define calculation functions
 
 #add date column
 def add_dates(df):
@@ -67,6 +143,40 @@ def clean_data(df, start_time = 2000, end_time = 2019):
     df.set_index(["date"], inplace = True, drop = False)
     
     return df
+#resample weekly to monthly data
+def resample_monthly(raw_data, species):
+   "resample weekly data to monthly for gaps"
+    
+   
+   raw_alt_flask = raw_data[raw_data["site"] == "alt"]
+   raw_brw_flask = raw_data[raw_data["site"] == "brw"]
+   raw_sum_flask = raw_data[raw_data["site"] == "sum"]
+  
+    #find the monthly means of the data
+   sample_data = [raw_alt_flask, raw_brw_flask, raw_sum_flask]
+   for s, d in enumerate(sample_data):
+       d.loc[:,"value"] = d[species]
+       d.set_index(np.arange(len(d["value"])), inplace = True)
+       d["year"] = 0
+       d["month"] = 0
+       d.loc[:, "date"] = pd.to_datetime(d["yyyymmdd hhmmss"].astype("datetime64[ns]"))
+       for i in range(len(d["value"])): #add year and month column
+           d.loc[i, 'year'] = d["date"][i].year
+           d.loc[i, "month"] = d["date"][i].month
+       final_data = d[d["year"] >= 2000][["year", "month", "value", "date"]]
+       final_data_mean = final_data.groupby(["year", "month"], as_index = False).mean()
+ 
+       
+       if s == 0:
+           alt_flask = final_data_mean
+       
+       if s == 1:
+           brw_flask = final_data_mean
+       
+       if s == 2:
+           sum_flask = final_data_mean
+           
+   return alt_flask, brw_flask, sum_flask
 
 #get all of the data into one big dataframe
 def make_data_file(alt_data, brw_data, sum_data, time, month, year):
@@ -148,7 +258,7 @@ def calculate_residuals(df, stations = ["alt", "brw", "sum"], reference_station 
     """
     
     for s in stations:
-        df[s+"_rolling"] = df[s].rolling(12, min_periods = 12).mean() #find the rolling mean
+        df[s+"_rolling"] = df[s].rolling(12, min_periods = 12, center = True).mean() #find the rolling mean
         df[s+"_anom"] = df[s] - df[s+"_rolling"] #calculate the anomaly
         df_seasonal_means = df.groupby("month").mean()
         
@@ -226,6 +336,10 @@ def find_coefficients(df, stations = ["alt", "brw"], alt = True):
         
         df = df.dropna() #need to drop the nans to run scipy.linalg.lstsq
         
+        #find correlation between the stations
+        r, p = stats.pearsonr(df["sum_anom"], df[s+"_anom"])
+        print(f"{s} Correlation: r = {r}, p = {p}")
+        
         #reshape the data to be an Nx1 array
         sum_reshape = df["sum_anom"].values.reshape(df["sum_anom"].shape[0], -1)
         station_reshape = df[s+"_anom"].values.reshape(df[s+"_anom"].shape[0], -1)
@@ -239,9 +353,15 @@ def find_coefficients(df, stations = ["alt", "brw"], alt = True):
         #we want the geometric slope such that x is summit and y is the station in ax = b
 
         slope = 0.5*(sum_v_station_rolling + 1/station_v_sum_rolling)
-        #we want the geometric slope such that x is summit and y is the station in ax = b
-        station_coefficients["ratio"] = slope #append to dictionary
+        residual_corrected = (df["sum_anom"] - 1/slope * df[s+"_anom"]).std()
+        residual = (df["sum_anom"] - df[s+"_anom"]).std()
+        print(f"Residual After Correction s: {residual_corrected}, vs {residual}")
         
+        if p < 0.01:
+            #we want the geometric slope such that x is summit and y is the station in ax = b
+            station_coefficients["ratio"] = slope #append to dictionary
+        else:
+           station_coefficients["ratio"] = 1
             
         all_coefficients[s] = station_coefficients #append each set of coefficients to the big dictionary
     return all_coefficients
@@ -253,26 +373,48 @@ def do_correction(df, coefficients, stations = ["alt", "brw"]):
         ratio = coefficients[s]["ratio"]
         offset = coefficients[s]["offset"]
         
-        df[s+"_inf"] = (df[s+"_rolling"] - offset) + df[s+"_anom"]/ratio
+        df[s+"_inf_rolling"] = (df[s+"_rolling"] - offset) #find the new rolling mean when the offset is added
+        df[s+"_inf_rolling_res"] = df["sum_rolling"] - df[s+"_inf_rolling"] #find the residual
+        df[s+"_inf"] = (df[s+"_rolling"] - offset) + df[s+"_anom"]/ratio #add wiggles back onto the data
         
-        print(f"{s} offset = {offset}, ratio = {1/ratio}")
+        print(f" At{s} the offset applied is {offset} and the ratio applied  = {1/ratio}")
         
     return df
 
 def make_final_dataset(df, df_NEEM, final_path, species, alt = True):
     """ take the average of all the data, fill in any gaps using the summit seasonal cycle and find the standard error"""
     if alt == True:
-        final_data_labels = ["alt_inf", "brw_inf", "sum"]
-        final_std_labels = ["alt_rolling_res", "brw_rolling_res"]
+        final_data_labels = ["alt_inf", "brw_inf", "sum", 'NEEM']
+        final_std_labels = ["alt_inf_rolling_res", "brw_inf_rolling_res"]
     else:
-        final_data_labels = ["brw_inf", "sum"]
-        final_std_labels = ["brw_rolling_res"]
-    df["value"] = df[final_data_labels].mean(axis = 1) #average all three sets of data together
-    df["std"] = df[final_std_labels].mean(axis = 1) #average difference between the residuals
-    NEEM_final = df_NEEM["date"].values[-1] #find the final date in NEEM dataset
+        final_data_labels = ["brw_inf", "sum", "NEEM"]
+        final_std_labels = ["brw_inf_rolling_res"]
     
-    df_no_overlap = df[df["date"] > NEEM_final]
-    egrip_dataset = pd.concat([df_NEEM, df_no_overlap[["date", "value", "std"]]], ignore_index= True)
+    #calculate uncertainty on the new datat0o9iiuyg
+    uncertainty_max = np.nanmax(df[final_std_labels].values)
+    uncertainty_min = np.nanmin(df[final_std_labels].values)
+    uncertainty = uncertainty_max - uncertainty_min #take the difference between the two inferred datasets
+    
+    df["std"] = uncertainty #average difference between the residuals
+    #take std between the max and min differences to get one number
+    
+    df_NEEM.set_index(["date"], drop = False, inplace = True)
+    end_NEEM = df_NEEM["date"].values[-1]
+    NEEM_overlap = df_NEEM[df_NEEM["date"] >= df["date"].values[0]] #find where our data starts in the NEEM dataset
+    df_no_overlap = df[df["date"] > end_NEEM]
+    extra_nans = pd.Series(np.ones(len(df_no_overlap.index))*np.nan, index = df_no_overlap.index)
+    #use these to pad out the NEEM for merging
+    
+    df["NEEM"] = pd.concat([NEEM_overlap["value"], extra_nans])
+    df["NEEM_unc"] = pd.concat([NEEM_overlap["std"], extra_nans])
+    
+    df["value"] = df[final_data_labels].mean(axis = 1)
+    df["std"] = df[["std", "NEEM_unc"]].mean(axis = 1) #average the NEEM uncertainties with ours
+    
+    NEEM_no_overlap = df_NEEM[df_NEEM["date"] <= df["date"].values[0] + 196/365] #because the rolling mean centres
+    #the window, we need to add 6 months since we don't have inferred data for those times
+    
+    egrip_dataset = pd.concat([NEEM_no_overlap, df[["date", "value", "std"]]], ignore_index= True)
     
     #save the file
     egrip_dataset.to_csv(final_path+f"SCENARIO_EGRIP18_{species}.csv")
@@ -338,6 +480,7 @@ def plot_figure3(df, fig_num, species, final_path, alt = True):
         f = plt.figure(fig_num, clear = True)
         axs = f.subplots(1,2)
         
+        ax = axs[0]
         ax.plot(df["date"], df["alt_straight_res"], color = cmap2[0], ls = "dashed")
         ax.plot(df["date"], df["alt_rolling_res"], color = cmap2[0], label = "alert")
         
@@ -765,3 +908,255 @@ plot_figure6(ccl4_data, ccl4_NEEM, 36, "ccl4", ccl4_path, alt = False) #check th
 ccl4_data, ccl4_egrip = make_final_dataset(ccl4_data, ccl4_NEEM, final_data_directory, "CCL4", alt = False)
 #plot the final dataset
 plot_figure7(ccl4_egrip, ccl4_NEEM, 37, "ccl4", ccl4_path)
+
+#%% CH3CCL3 Data
+ch3ccl3_path = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\ch3ccl3\\*.txt"
+ch3ccl3_files = glob.glob(ch3ccl3_path)
+ch3ccl3_path = final_data_directory + "ch3ccl3\\"
+
+ch3ccl3_brw_insitu = pd.DataFrame( np.loadtxt(ch3ccl3_files[0], usecols= hal_columns), 
+                               columns = ["year", "month", "value", "unc", "std"])
+ch3ccl3_brw_insitu = clean_data(ch3ccl3_brw_insitu)
+
+ch3ccl3_brw_insitu1 = pd.DataFrame( np.loadtxt(ch3ccl3_files[1], usecols= hal_columns), 
+                               columns = ["year", "month", "value", "unc", "std"])
+ch3ccl3_brw_insitu1 = clean_data(ch3ccl3_brw_insitu1)
+
+ch3ccl3_brw_insitu = pd.concat([ch3ccl3_brw_insitu, ch3ccl3_brw_insitu1], 
+                               ignore_index= True)
+ch3ccl3_brw_insitu = clean_data(ch3ccl3_brw_insitu)
+
+ch3ccl3_sum_insitu = pd.DataFrame( np.loadtxt(ch3ccl3_files[2], usecols = hal_columns), columns = 
+                             ["year", "month", "value", "unc", "std"])
+ch3ccl3_sum_insitu = clean_data(ch3ccl3_sum_insitu)
+
+
+ch3ccl3_NEEM = pd.DataFrame( np.loadtxt(ch3ccl3_files[3], ), columns = 
+                             ["date","value", "std"])
+
+#make datafile and find all of the values
+ch3ccl3_data = make_data_file(no_alt, ch3ccl3_brw_insitu, ch3ccl3_sum_insitu, ch3ccl3_brw_insitu["date"], 
+                           ch3ccl3_brw_insitu["month"], ch3ccl3_brw_insitu["year"])
+#find the seasonal cycle, subtract it and look at the residuals
+ch3ccl3_data = calculate_residuals(ch3ccl3_data, stations = ["brw", "sum"])
+
+plot_figure1(ch3ccl3_data, 41, "ch3ccl3", ch3ccl3_path, alt = False) #plot the raw values and the rolling mean
+plot_figure2(ch3ccl3_data, 42, "ch3ccl3", ch3ccl3_path, alt = False) #plot the seasonal cycle at each station
+
+ch3ccl3_coefficients = find_coefficients(ch3ccl3_data, stations = ["brw"], alt = False) #find coefficients to apply to make the data
+
+plot_figure3(ch3ccl3_data, 43, "ch3ccl3", ch3ccl3_path, alt = False) #plot the residuals (rolling and detrended)
+plot_figure4(ch3ccl3_data, ch3ccl3_coefficients, 44, "ch3ccl3", ch3ccl3_path, alt = False) #check that the best fit line actually has 0 intercept
+#and is fitting the data well
+ch3ccl3_data = do_correction(ch3ccl3_data, ch3ccl3_coefficients, stations = ["brw"]) #apply the offset and ratio
+plot_figure5(ch3ccl3_data, ch3ccl3_coefficients, 45, "ch3ccl3", ch3ccl3_path, alt = False) #check that the correction worked
+plot_figure6(ch3ccl3_data, ch3ccl3_NEEM, 46, "ch3ccl3", ch3ccl3_path, alt = False) #check the overlap with NEEM
+
+#average the dataset together for the final data
+ch3ccl3_data, ch3ccl3_egrip = make_final_dataset(ch3ccl3_data, ch3ccl3_NEEM, final_data_directory, "CH3CCl3", alt = False)
+#plot the final dataset
+plot_figure7(ch3ccl3_egrip, ch3ccl3_NEEM, 47, "ch3ccl3", ch3ccl3_path)
+
+#%% CFC11 Data
+cfc11_path = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\cfc11\\*.txt"
+cfc11_files = glob.glob(cfc11_path)
+cfc11_path = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\Final\\cfc11\\"
+cfc11_brw_insitu = pd.DataFrame(np.loadtxt(cfc11_files[1], usecols = hal_columns), columns = 
+                                ["year", "month", "value", "unc", "std"])
+cfc11_brw_insitu1 = pd.DataFrame(np.loadtxt(cfc11_files[2], usecols = hal_columns), columns = 
+                                ["year", "month", "value", "unc", "std"])
+cfc11_brw_insitu = pd.concat([cfc11_brw_insitu, cfc11_brw_insitu1], ignore_index = True)
+
+cfc11_sum_insitu = pd.DataFrame(np.loadtxt(cfc11_files[4], usecols = hal_columns), columns = 
+                                ["year", "month", "value", "unc", "std"])
+cfc11_sum_insitu = clean_data(cfc11_sum_insitu)
+cfc11_brw_insitu = clean_data(cfc11_brw_insitu)
+
+cfc11_NEEM = pd.DataFrame(np.loadtxt(cfc11_files[5], usecols = (0,1,2)), columns = 
+                                ["date", "value", "std"])
+cfc11_NEEM["value"] = cfc11_NEEM["value"]/1.0081
+
+#make datafile and find all of the values
+cfc11_data = make_data_file(no_alt, cfc11_brw_insitu, cfc11_sum_insitu, cfc11_brw_insitu["date"], 
+                           cfc11_brw_insitu["month"], cfc11_brw_insitu["year"])
+#find the seasonal cycle, subtract it and look at the residuals
+cfc11_data = calculate_residuals(cfc11_data, stations = ["brw", "sum"])
+
+plot_figure1(cfc11_data, 51, "cfc11",cfc11_path, alt = False) #plot the raw values and the rolling mean
+plot_figure2(cfc11_data, 52, "cfc11", cfc11_path, alt = False) #plot the seasonal cycle at each station
+
+cfc11_coefficients = find_coefficients(cfc11_data, stations = ["brw"], alt = False) #find coefficients to apply to make the data
+
+plot_figure3(cfc11_data, 53, "cfc11", cfc11_path, alt = False) #plot the residuals (rolling and detrended)
+plot_figure4(cfc11_data, cfc11_coefficients, 54, "cfc11", cfc11_path, alt = False) #check that the best fit line actually has 0 intercept
+#and is fitting the data well
+cfc11_data = do_correction(cfc11_data, cfc11_coefficients, stations = ["brw"]) #apply the offset and ratio
+plot_figure5(cfc11_data, cfc11_coefficients, 55, "cfc11", cfc11_path, alt = False) #check that the correction worked
+
+plot_figure6(cfc11_data, cfc11_NEEM, 56, "cfc11", cfc11_path, alt = False) #check the overlap with NEEM
+
+#average the dataset together for the final data
+cfc11_data, cfc11_egrip = make_final_dataset(cfc11_data, cfc11_NEEM, final_data_directory, "CFC11", alt = False)
+#plot the final dataset
+plot_figure7(cfc11_egrip, cfc11_NEEM, 57, "cfc11", cfc11_path)
+
+#%% CFC12
+cfc12_path = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\cfc12\\*.txt"
+cfc12_files = glob.glob(cfc12_path)
+cfc12_path = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\Final\\cfc12\\"
+cfc12_brw_insitu = pd.DataFrame(np.loadtxt(cfc12_files[0], usecols = hal_columns), columns = 
+                                ["year", "month", "value", "unc", "std"])
+cfc12_brw_insitu1 = pd.DataFrame(np.loadtxt(cfc12_files[1], usecols = hal_columns), columns = 
+                                ["year", "month", "value", "unc", "std"])
+cfc12_brw_insitu = pd.concat([cfc12_brw_insitu, cfc12_brw_insitu1], ignore_index = True)
+
+cfc12_sum_insitu = pd.DataFrame(np.loadtxt(cfc12_files[2], usecols = hal_columns), columns = 
+                                ["year", "month", "value", "unc", "std"])
+cfc12_sum_insitu = clean_data(cfc12_sum_insitu)
+cfc12_brw_insitu = clean_data(cfc12_brw_insitu)
+
+cfc12_NEEM = pd.DataFrame(np.loadtxt(cfc12_files[3], usecols = (0,1,2)), columns = 
+                                ["date", "value", "std"])
+
+#make datafile and find all of the values
+cfc12_data = make_data_file(no_alt, cfc12_brw_insitu, cfc12_sum_insitu, cfc12_brw_insitu["date"], 
+                           cfc12_brw_insitu["month"], cfc12_brw_insitu["year"])
+#find the seasonal cycle, subtract it and look at the residuals
+cfc12_data = calculate_residuals(cfc12_data, stations = ["brw", "sum"])
+
+plot_figure1(cfc12_data, 61, "cfc12", cfc12_path, alt = False) #plot the raw values and the rolling mean
+plot_figure2(cfc12_data, 62, "cfc12", cfc12_path, alt = False) #plot the seasonal cycle at each station
+
+cfc12_coefficients = find_coefficients(cfc12_data, stations = ["brw"], alt = False) #find coefficients to apply to make the data
+
+plot_figure3(cfc12_data, 63, "cfc12", cfc12_path, alt = False) #plot the residuals (rolling and detrended)
+plot_figure4(cfc12_data, cfc12_coefficients, 64, "cfc12", cfc12_path, alt = False) #check that the best fit line actually has 0 intercept
+#and is fitting the data well
+cfc12_data = do_correction(cfc12_data, cfc12_coefficients, stations = ["brw"]) #apply the offset and ratio
+plot_figure5(cfc12_data, cfc12_coefficients, 65, "cfc12", cfc12_path, alt = False) #check that the correction worked
+#no calibration ratio applied
+plot_figure6(cfc12_data, cfc12_NEEM, 66, "cfc12", cfc12_path, alt = False) #check the overlap with NEEM
+
+#average the dataset together for the final data
+cfc12_data, cfc12_egrip = make_final_dataset(cfc12_data, cfc12_NEEM, final_data_directory, "CFC12", alt = False)
+#plot the final dataset
+plot_figure7(cfc12_egrip, cfc12_NEEM, 67, "cfc12", cfc12_path)
+
+#%% CFC113
+cfc113_path = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\cfc113\\*.txt"
+cfc113_files = glob.glob(cfc113_path)
+cfc113_path = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\Final\\cfc113\\"
+
+cfc113_brw_insitu = pd.DataFrame(np.loadtxt(cfc113_files[0], usecols = hal_columns), columns = 
+                                ["year", "month", "value", "unc", "std"])
+
+cfc113_sum_insitu = pd.DataFrame(np.loadtxt(cfc113_files[2], usecols = hal_columns), columns = 
+                                ["year", "month", "value", "unc", "std"])
+cfc113_sum_insitu = clean_data(cfc113_sum_insitu)
+cfc113_brw_insitu = clean_data(cfc113_brw_insitu)
+
+cfc113_NEEM = pd.DataFrame(np.loadtxt(cfc113_files[3], usecols = (0,1,2)), columns = 
+                                ["date", "value", "std"])
+
+cfc113_discrete = pd.read_table(cfc113_files[1], header = 1)
+
+cfc113_alt_flask, cfc113_brw_flask, cfc113_sum_flask = resample_monthly(cfc113_discrete, "CFC113" )
+
+cfc113_alt_flask = clean_data(cfc113_alt_flask)
+cfc113_brw_flask = clean_data(cfc113_brw_flask)
+cfc113_sum_flask = clean_data(cfc113_sum_flask)
+
+#average each dataset together
+cfc113_alt = cfc113_alt_flask.set_index("date")
+cfc113_brw = cfc113_brw_flask.set_index("date")
+cfc113_sum = cfc113_sum_flask.set_index("date")
+
+cfc113_brw_insitu["flask"] = cfc113_brw["value"]
+cfc113_sum_insitu["flask"] = cfc113_sum["value"]
+
+cfc113_brw_insitu["value"] = cfc113_brw_insitu[["value", "flask"]].mean(axis = 1)
+cfc113_sum_insitu["value"] = cfc113_sum_insitu[["value", "flask"]].mean(axis = 1)
+
+#make datafile and find all of the values
+cfc113_data = make_data_file(cfc113_alt, cfc113_brw_insitu, cfc113_sum_insitu, cfc113_brw_insitu["date"], 
+                           cfc113_brw_insitu["month"], cfc113_brw_insitu["year"])
+#find the seasonal cycle, subtract it and look at the residuals
+cfc113_data = calculate_residuals(cfc113_data, stations = ["alt","brw", "sum"])
+
+plot_figure1(cfc113_data, 71, "cfc113", cfc113_path) #plot the raw values and the rolling mean
+plot_figure2(cfc113_data, 72, "cfc113", cfc113_path) #plot the seasonal cycle at each station
+
+cfc113_coefficients = find_coefficients(cfc113_data, stations = ["alt","brw"]) #find coefficients to apply to make the data
+
+plot_figure3(cfc113_data, 73, "cfc113", cfc113_path) #plot the residuals (rolling and detrended)
+plot_figure4(cfc113_data, cfc113_coefficients, 74, "cfc113", cfc113_path) #check that the best fit line actually has 0 intercept
+#and is fitting the data well
+cfc113_data = do_correction(cfc113_data, cfc113_coefficients, stations = ["alt","brw"]) #apply the offset and ratio
+plot_figure5(cfc113_data, cfc113_coefficients, 75, "cfc113", cfc113_path) #check that the correction worked
+plot_figure6(cfc113_data, cfc113_NEEM, 76, "cfc113", cfc113_path) #check the overlap with NEEM
+
+#average the dataset together for the final data
+cfc113_data, cfc113_egrip = make_final_dataset(cfc113_data, cfc113_NEEM, final_data_directory, "CFC113")
+#plot the final dataset
+plot_figure7(cfc113_egrip, cfc113_NEEM, 77, "cfc113", cfc113_path)
+
+#%%
+df = cfc12_data
+coefficients = cfc12_coefficients
+plt.figure(1000, clear = True)
+brw_slope = coefficients["brw"]["ratio"]
+plt.plot(df["sum_anom"], brw_slope*df["sum_anom"], color = colors[4], label = "barrow line")
+plt.plot(df["sum_anom"], coefficients["brw"]["sum_v_station"]*df["sum_anom"], ls = "dashed", color = colors[4])
+plt.plot(df["sum_anom"], 1/coefficients["brw"]["station_v_sum"]*df["sum_anom"], ls = "dashed", color = colors[4])
+
+
+plt.scatter(df["sum_anom"], df["brw_anom"], color = cmap2[4], alpha = 0.7)
+
+plt.ylim(-2,2)
+
+plt.xlabel("summit")
+plt.ylabel("barrow")
+plt.legend()
+plt.title("Regression of detrended Summit Against Barrow")
+plt.grid()
+
+#%% CFC134a
+cfc134a_path = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\cfc134a\\*.txt"
+cfc134a_files = glob.glob(cfc134a_path)
+cfc134a_path = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\Final\\cfc134a\\"
+
+raw_cfc134a = pd.read_table(cfc134a_files[0], header = 1)
+cfc134a_alt_flask, cfc134a_brw_flask, cfc134a_sum_flask = resample_monthly(raw_cfc134a, "hfc134a")
+
+cfc134a_NEEM = pd.DataFrame(np.loadtxt(cfc134a_files[1]), columns = ["date", "value", "std"])
+                    
+#clean up the new data
+cfc134a_alt_flask = clean_data(cfc134a_alt_flask)
+cfc134a_brw_flask = clean_data(cfc134a_brw_flask)
+cfc134a_sum_flask = clean_data(cfc134a_sum_flask)
+
+#make datafile and find all of the values
+cfc134a_data = make_data_file(cfc134a_alt_flask, cfc134a_brw_flask, cfc134a_sum_flask, 
+                              cfc134a_brw_flask["date"], cfc134a_brw_flask["month"], cfc134a_brw_flask["year"])
+#find the seasonal cycle, subtract it and look at the residuals
+cfc134a_data = calculate_residuals(cfc134a_data)
+
+plot_figure1(cfc134a_data, 81, "cfc134a", cfc134a_path) #plot the raw values and the rolling mean
+plot_figure2(cfc134a_data, 82, "cfc134a", cfc134a_path) #plot the seasonal cycle at each station
+
+cfc134a_coefficients = find_coefficients(cfc134a_data) #find coefficients to apply to make the data
+plot_figure3(cfc134a_data, 83, "cfc134a", cfc134a_path) #plot the residuals (rolling and detrended)
+plot_figure4(cfc134a_data, cfc134a_coefficients, 84, "cfc134a", cfc134a_path) #check that the best fit line actually has 0 intercept
+#and is fitting the data well
+cfc134a_data = do_correction(cfc134a_data, cfc134a_coefficients) #apply the offset and ratio
+plot_figure5(cfc134a_data, cfc134a_coefficients, 85, "cfc134a", cfc134a_path) #check that the correction worked
+plot_figure6(cfc134a_data, cfc134a_NEEM, 86, "cfc134a", cfc134a_path) #check the overlap with NEEM
+
+#average the dataset together for the final data
+cfc134a_data, cfc134a_egrip = make_final_dataset(cfc134a_data, cfc134a_NEEM, final_data_directory, "CFC134A")
+#plot the final dataset
+plot_figure7(cfc134a_egrip, cfc134a_NEEM, 87, "cfc134a", cfc134a_path)
+          
+
+
+  
