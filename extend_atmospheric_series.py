@@ -46,7 +46,7 @@ Workflow Breakdown
 Figures
 -------------------------------------------
 The code will produce 7-8 figures for each species. If there exists both flask and insitu data for a particular species
-the code will plot both types of data to ensure that they are sufficiently similar. 
+the code will plot both types of data to ensure that they are sufficiently similar to be mixed together. 
 
 figure 1:
     Raw data at each station with the 12 month rolling mean.
@@ -89,6 +89,7 @@ import scipy.linalg as alg #for linear regression
 import datetime
 import scipy.stats as stats
 import warnings
+
 #switch working directory to the USRA_2025, this is specifically because my computer hates me
 cwd = os.getcwd()
 wd = 'C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Code'
@@ -104,7 +105,6 @@ hal_columns = (0,1,2,3,4) # for the halocompounds since those are also in a diff
 
 #the only warnings that I'm getting are from pandas and I can't get rid of them no matter what I try
 warnings.filterwarnings("ignore", category=UserWarning)
-
 
 #%% define calculation functions
 
@@ -134,8 +134,22 @@ def add_dates(df):
 
 #tidy the data by cropping to relevant dates
 def clean_data(df, start_time = 2000, end_time = 2019):
-    """ workflow to ease cleaning the data up for future functions. Calls add_dates to add a date column as well
-   as croppping the data since we don't need the full record. Here we use 9 years of overlap since NEEM ends at 2008.96 """
+    """Add date column using the add_dates function, standardize dates to start at 2000 and end in 2019, set index of 
+    dataframe to date. 
+    inputs
+    -----------
+    df: pandas dataframe
+        raw dataframe that was read in
+    start_time: float, default 2000
+        the year at which you want to start every timeseries
+    end_time: float, default 2019
+        The year at which you want to end the timeseries
+    
+    returns
+    -------------
+    df: pandas dataframe
+        the cleaned dataframe with date column and new index
+    """
     df = add_dates(df) #get dates in clean format
     #df = find_seasonal_cycle(df, plot = False) #get anomalies
     df = df[df["date"] > start_time] #grab all of the data that NEEM doesn't have with 10 years overlap
@@ -143,9 +157,28 @@ def clean_data(df, start_time = 2000, end_time = 2019):
     df.set_index(["date"], inplace = True, drop = False)
     
     return df
+
 #resample weekly to monthly data
 def resample_monthly(raw_data, species):
-   "resample weekly data to monthly for gaps"
+   """"resample weekly data to monthly at 3 arctic sites
+   
+   inputs
+   -----------------
+   raw_data: pandas dataframe
+       data downloaded as discrete data from NOAA database, contains all of the weekly data at all stations
+   species: string
+       the name of the chemical species as listed in the raw data
+      
+        
+    returns
+    ------------------
+    alt_flask: pandas dataframe
+        resampled data at monthly resolution at the alert station
+    brw_flask: pandas dataframe
+        reseampled data at monthly resolution at the barrow station
+    sum_flask: pandas dataframe
+        resampled data at monthly resolution at the summit station
+   """
     
    
    raw_alt_flask = raw_data[raw_data["site"] == "alt"]
@@ -304,7 +337,22 @@ def find_coefficients(df, stations = ["alt", "brw"], alt = True):
             Solves the least squares optimisation problem ax = b where a is one set of data and b is the other.
             
     (3) determines if the slope is significantly different than one using the residues of the optimisation.
-        if [FILL THIS IN]"""
+        if the slope is significant at a 1% level
+        
+    inputs
+    --------------
+    df: pandas dataframe
+        dataframe on which to compute the coefficients, must contain the residual of the rolling mean, and of the detrended
+        data
+    stations: list of strings, default ["alt", "brw"] 
+        the station on which you want to calculate the coefficients
+    alt: Boolean, default True
+        select true if there is data from an alert station to be analysed
+        
+    returns
+    -----------------
+    all_coefficients: dictionary
+        dictionary containing a dictionary for each station that contains the coefficients """
     all_coefficients = {}
     
     if alt == False: #for when we don't have data from alert
@@ -367,7 +415,27 @@ def find_coefficients(df, stations = ["alt", "brw"], alt = True):
     return all_coefficients
 
 def do_correction(df, coefficients, stations = ["alt", "brw"]):
-    """apply the correction coefficients to find an inferred summit timeseries"""
+    """apply the correction coefficients to find an inferred summit timeseries. The function will print the
+    ratio and offset that will be applied to the data along with the station.
+    
+    inputs
+    -----------------
+    df: pandas dataframe
+        the dataframe that contains the data that will be corrected
+    coefficients: dictionary
+        a nested dictionary of stations and their coefficients
+    stations: list of strings, default is ["alt", "brw"] 
+        list of stations that are to be corrected
+    
+    returns
+    --------------------
+    df: pandas dataframe
+        the input dataframe with 6 new columns containing
+        
+        s + _inf_rolling -> the rolling mean with the offset applied
+        s + _inf_rolling_res -> the residual of the s+ _inf_rolling with summit data
+        s + _inf -> the rolling mean with the offset applied as well as the detrended data with the ratio applied
+        """
     
     for s in stations:
         ratio = coefficients[s]["ratio"]
@@ -376,13 +444,34 @@ def do_correction(df, coefficients, stations = ["alt", "brw"]):
         df[s+"_inf_rolling"] = (df[s+"_rolling"] - offset) #find the new rolling mean when the offset is added
         df[s+"_inf_rolling_res"] = df["sum_rolling"] - df[s+"_inf_rolling"] #find the residual
         df[s+"_inf"] = (df[s+"_rolling"] - offset) + df[s+"_anom"]/ratio #add wiggles back onto the data
+        df[s+"_inf_res"] = df["sum"] - df[s+"_inf"] #find the new residual of the data
         
-        print(f" At{s} the offset applied is {offset} and the ratio applied  = {1/ratio}")
+        print(f" At {s} the offset applied is {offset} and the ratio applied  = {1/ratio}")
         
     return df
 
 def make_final_dataset(df, df_NEEM, final_path, species, alt = True):
-    """ take the average of all the data, fill in any gaps using the summit seasonal cycle and find the standard error"""
+    """ take the average of all the data, fill in any gaps using the summit seasonal cycle and find the standard error
+    
+    inputs
+    -------------------
+    df: pandas dataframe
+        dataframe containing the corrected data
+    df_NEEM: pandas dataframe
+        dataframe containing the columns date, value, std that were used in the NEEM analysis
+    final_path: string
+        the location on the computer that the final dataset will be saved to
+    species: string
+        the name of the chemical species IN ALL CAPS that will be added to the name of the file
+    alt: boolean, default = True
+        select true if there exists data from the alert station
+        
+    returns
+    --------------------
+    df: pandas dataframe
+        dataframe that contains the uncertainty and merged value for the data at EGRIP from start_time to end_time
+    egrip_dataset: pandas dataframe
+        dataframe containing the atmospheric history from pre-start_time to end_time"""
     if alt == True:
         final_data_labels = ["alt_inf", "brw_inf", "sum", 'NEEM']
         final_std_labels = ["alt_inf_rolling_res", "brw_inf_rolling_res"]
@@ -419,12 +508,26 @@ def make_final_dataset(df, df_NEEM, final_path, species, alt = True):
     #save the file
     egrip_dataset.to_csv(final_path+f"SCENARIO_EGRIP18_{species}.csv")
     return df, egrip_dataset
+
 #%% define the plotting functions
+
 #define colormap
 cmap = mpl.colormaps["berlin"]
 cmap2 = sns.color_palette(palette='icefire')
 n_lines = 7
 colors = cmap(np.linspace(0,1,n_lines))
+
+#flask and insitu data check
+def plot_figure0(df_flask, df_insitu, fig_num, species, station):
+    """plot the overlap of flask and insitu data at stations where both exist"""
+        
+
+    plt.figure(fig_num, clear = True)
+    plt.plot(df_flask["date"], df_flask["value"], color = colors[3], label = "Flask Data")
+    plt.plot(df_insitu["date"], df_insitu["value"], color = colors[6], label = "Insitu Data")
+    plt.xlabel("time"), plt.ylabel("concentration (ppm)")
+    plt.title(f"{species} data from 2 sources at {station}")
+    plt.legend()
 
 #raw data
 def plot_figure1(df, fig_num, species, final_path, alt = True):
@@ -475,7 +578,7 @@ def plot_figure2(df, fig_num, species, final_path, alt = True):
     
 #residuals
 def plot_figure3(df, fig_num, species, final_path, alt = True):
-    """plot the residuals of the detrended data (_anom) and the rolling means"""
+    """plot the residuals of the detrended data (_anom) and the rolling means (_rolling)"""
     if alt == True:
         f = plt.figure(fig_num, clear = True)
         axs = f.subplots(1,2)
@@ -574,24 +677,65 @@ def plot_figure4(df, coefficients, fig_num, species, final_path, alt = True):
 def plot_figure5(df, coefficients, fig_num, species, final_path, alt = True):
     if alt == True:
         f = plt.figure(fig_num, clear = True)
-        axs = f.subplots(1,2)
+        axs = f.subplots(2,2)
         
-        ax = axs[0]
+        #plot alert data
+        ax = axs[0,0]
         ax.plot(df["date"], df["alt_inf"], color = cmap2[0], label = "Inferred Summit")
         ax.plot(df["date"], df["sum"], color = cmap2[5], label = "Actual Summit")
         
-        ax.plot(df["date"], df["alt"], ls = "dashed", color = cmap2[0], label = "Uncorrected Alert")
-        ax.plot(df["date"], df["alt_rolling"], label = "Alert Rolling Mean", color = cmap2[0])
-        ax.plot(df["date"], df["sum_rolling"], label = "Summit Rolling Mean", color = cmap2[5])
-        ax.plot(df["date"], df["alt_rolling"] - coefficients["alt"]["offset"], 
-                label = "Alert minus offset", color = cmap2[3])
+        ax.plot(df["date"], df["alt"], ls = "dashed", color = cmap2[0])
+        ax.plot(df["date"], df["alt_rolling"], color = cmap2[0], ls = "-.")
+        ax.plot(df["date"], df["sum_rolling"], color = cmap2[5])
+        ax.plot(df["date"], df["alt_rolling"] - coefficients["alt"]["offset"], color = cmap2[0])
         
         ax.set_xlabel("time")
         ax.set_ylabel(f"{species} concentration (ppm)")
         ax.set_title(f"Effects of Correction on {species} Data at ALERT")
         ax.legend()
         
-        ax = axs[1]
+        #plot barrow data
+        ax = axs[0,1]
+        ax.plot(df["date"], df["brw_inf"], color = cmap2[4], label = "Inferred Summit")
+        ax.plot(df["date"], df["sum"], color = cmap2[5], label = "Actual Summit")
+        
+        ax.plot(df["date"], df["brw"], ls = "dashed", color = cmap2[4])
+        ax.plot(df["date"], df["brw_rolling"], color = cmap2[4], ls = "-.")
+        ax.plot(df["date"], df["sum_rolling"], color = cmap2[5])
+        ax.plot(df["date"], df["brw_rolling"] - coefficients["brw"]["offset"], color = cmap2[4])
+        
+        ax.set_xlabel("time")
+        ax.set_ylabel(f"{species} concentration (ppm)")
+        ax.set_title(f"Effects of Correction on {species} Data at BARROW")
+        ax.legend()
+        
+        #plot alert residuals
+        ax = axs[1,0]
+        ax.plot(df["date"], df["alt_inf_res"], color = cmap2[0], ls = "dashed", label = "Residuals")
+        ax.plot(df["date"], df["alt_inf_rolling_res"], color = cmap2[0], label = "Residual on Rolling Mean")
+        ax.set_xlabel("time")
+        ax.set_ylabel(f"(sum - alt) (ppm)")
+        ax.set_title(f"Residuals after correction at ALERT")
+        ax.axhline(color = cmap2[5], ls = "dotted")
+        ax.grid()
+        ax.legend()
+        
+        ax = axs[1,1]
+        ax.plot(df["date"], df["brw_inf_res"], color = cmap2[4], ls = "dashed", label = "Residuals")
+        ax.plot(df["date"], df["brw_inf_rolling_res"], color = cmap2[4], label = "Residual on Rolling Mean")
+        ax.set_xlabel("time")
+        ax.set_ylabel(f"(sum - brw) (ppm)")
+        ax.axhline(color = cmap2[5], ls = "dotted")
+        ax.set_title(f"Residuals after correction at BARROW")
+        ax.grid()
+        ax.legend()
+        
+    else:
+        f = plt.figure(fig_num, clear = True)
+        axs = f.subplots(2,1)
+        
+        #plot just the barrow data
+        ax = axs[0]
         ax.plot(df["date"], df["brw_inf"], color = cmap2[4], label = "Inferred Summit")
         ax.plot(df["date"], df["sum"], color = cmap2[5], label = "Actual Summit")
         
@@ -606,21 +750,16 @@ def plot_figure5(df, coefficients, fig_num, species, final_path, alt = True):
         ax.set_title(f"Effects of Correction on {species} Data at BARROW")
         ax.legend()
         
-    else:
-        plt.figure(fig_num, clear = True)
-        plt.plot(df["date"], df["brw_inf"], color = cmap2[4], label = "Inferred Summit")
-        plt.plot(df["date"], df["sum"], color = cmap2[5], label = "Actual Summit")
-        
-        plt.plot(df["date"], df["brw"], ls = "dashed", color = cmap2[4], label = "Uncorrected Barrow")
-        plt.plot(df["date"], df["brw_rolling"], label = "Barrow Rolling Mean", color = cmap2[4])
-        plt.plot(df["date"], df["sum_rolling"], label = "Summit Rolling Mean", color = cmap2[5])
-        plt.plot(df["date"], df["brw_rolling"] - coefficients["brw"]["offset"], 
-                label = "Barrow minus offset", color = cmap2[3])
-        
-        plt.xlabel("time")
-        plt.ylabel(f"{species} concentration (ppm)")
-        plt.title(f"Effects of Correction on {species} Data at BARROW")
-        plt.legend()
+        #plot the residuals
+        ax = axs[1,0]
+        ax.plot(df["date"], df["brw_inf_res"], color = cmap2[4], ls = "dashed", label = "Residuals")
+        ax.plot(df["date"], df["brw_inf_rolling_res"], color = cmap2[4], label = "Residual on Rolling Mean")
+        ax.set_xlabel("time")
+        ax.set_ylabel(f"(sum - brw) (ppm)")
+        ax.axhline(color = cmap2[5], ls = "dotted")
+        ax.set_title(f"Residuals after correction at BARROW")
+        ax.grid()
+        ax.legend()
         
 
 #NEEM overlap
@@ -648,6 +787,7 @@ def plot_figure7(df, df_NEEM, fig_num, species, final_path):
     plt.fill_between(df["date"], df["value"] + df["std"], df["value"] - df["std"], color = cmap2[3], alpha = 0.4)
     plt.axvline(last_NEEM, color = colors[5])
     
+    plt.xlim(1990)
     plt.xlabel("time")
     plt.ylabel("concentration (ppm)")
     plt.title(f"Concentration of {species} in the High Arctic \n Merged with NEEM")
@@ -686,14 +826,7 @@ co2_brw = co2_brw_flask
 co2_brw["data_insitu"] = co2_brw_insitu["value"]
 
 #check that both barrows look similar
-plt.figure(0, clear = True)
-plt.plot(co2_brw_insitu.index, co2_brw_insitu["value"], color = cmap2[1])
-plt.plot(co2_brw_flask.index, co2_brw_flask["value"], color = cmap2[2])
-plt.plot(co2_brw.index, co2_brw["data_insitu"], linestyle = "dashed", color = colors[3])
-
-co2_brw["mean_brw"] = co2_brw[["value", "data_insitu"]].mean(axis = 1)
-co2_brw = co2_brw[["mean_brw", "date", "year", "month"]]
-co2_brw.rename(columns = {"mean_brw" : "value"}, inplace = True)
+plot_figure0(co2_brw_flask, co2_brw_insitu, 0, "co2", "BARROW")
 
 
 #make datafile and find all of the values
@@ -751,14 +884,7 @@ ch4_brw = ch4_brw_flask
 ch4_brw["data_insitu"] = ch4_brw_insitu["value"]
 
 #check that both barrows look similar
-plt.figure(10, clear = True)
-plt.plot(ch4_brw_insitu.index, ch4_brw_insitu["value"], color = cmap2[1])
-plt.plot(ch4_brw_flask.index, ch4_brw_flask["value"], color = cmap2[2])
-plt.plot(ch4_brw.index, ch4_brw["data_insitu"], linestyle = "dashed", color = colors[3])
-
-ch4_brw["mean_brw"] = ch4_brw[["value", "data_insitu"]].mean(axis = 1)
-ch4_brw = ch4_brw[["mean_brw", "date", "year", "month"]]
-ch4_brw.rename(columns = {"mean_brw" : "value"}, inplace = True)
+plot_figure0(ch4_brw_flask, ch4_brw_insitu, 10, "ch4", "BARROW")
 
 #make datafile and find all of the values
 ch4_data = make_data_file(ch4_alt_flask, ch4_brw, ch4_sum_flask, ch4_brw["date"], ch4_brw["month"], ch4_brw["year"])
@@ -820,19 +946,8 @@ sf6_brw["data_insitu"] = sf6_brw_insitu["value"]
 sf6_sum = sf6_sum_flask
 sf6_sum["data_insitu"] = sf6_sum_insitu["value"]
 #check that both barrows look similar
-f = plt.figure(20, clear = True)
-axs = f.subplots(1,2)
-ax = axs[0]
-ax.plot(sf6_brw_insitu.index, sf6_brw_insitu["value"], color = cmap2[1])
-ax.plot(sf6_brw_flask.index, sf6_brw_flask["value"], color = cmap2[2])
-ax.plot(sf6_brw.index, sf6_brw["data_insitu"], linestyle = "dashed", color = colors[3])
-ax.set_title("BARROW")
-
-ax = axs[1]
-ax.plot(sf6_sum_insitu.index, sf6_sum_insitu["value"], color = cmap2[1])
-ax.plot(sf6_sum_flask.index, sf6_sum_flask["value"], color = cmap2[2])
-ax.plot(sf6_sum.index, sf6_sum["data_insitu"], linestyle = "dashed", color = cmap2[3])
-ax.set_title("SUMMIT")
+plot_figure0(sf6_brw_flask, sf6_brw_insitu, 29, "sf6", "BARROW")
+plot_figure0(sf6_sum_flask, sf6_sum_insitu, 28, "sf6", "SUMMIT")
 
 #average the barrows together
 sf6_brw["mean_brw"] = sf6_brw[["value", "data_insitu"]].mean(axis = 1)
@@ -1066,6 +1181,29 @@ cfc113_alt_flask = clean_data(cfc113_alt_flask)
 cfc113_brw_flask = clean_data(cfc113_brw_flask)
 cfc113_sum_flask = clean_data(cfc113_sum_flask)
 
+#make sure that all the new data meshes well with the in situ
+plot_figure0(cfc113_brw_flask, cfc113_brw_insitu, 70, "cfc113", "BARROW")
+plot_figure0(cfc113_sum_flask, cfc113_sum_insitu, 78, "cfc113", "SUMMIT")
+
+#these don't look like eachother at all and we can see that there is a clear offset, insitu data is ~1ppb larger
+#final data is significantly below NEEM so I'll add the mean difference to the flask data
+
+#calculate the offset between the 2 types of data
+cfc113_brw_insitu_offset = (cfc113_brw_flask["value"].rolling(12, min_periods = 12, center = True).mean() - 
+                        cfc113_brw_insitu["value"].rolling(12, min_periods = 12, center = True).mean()).mean()
+
+cfc113_sum_insitu_offset = (cfc113_sum_flask["value"].rolling(12, min_periods = 12, center = True).mean() - 
+                        cfc113_sum_insitu["value"].rolling(12, min_periods = 12, center = True).mean()).mean()
+
+#apply new offset and plot again
+cfc113_brw_flask.loc[:,"value"] = cfc113_brw_flask["value"] - cfc113_brw_insitu_offset
+cfc113_sum_flask.loc[:, "value"] = cfc113_sum_flask["value"] - cfc113_sum_insitu_offset
+
+#plot to make sure that the data looks good now
+plot_figure0(cfc113_brw_flask, cfc113_brw_insitu, 79, "cfc113", "BARROW")
+plot_figure0(cfc113_sum_flask, cfc113_sum_insitu, 80, "cfc113", "SUMMIT")
+
+
 #average each dataset together
 cfc113_alt = cfc113_alt_flask.set_index("date")
 cfc113_brw = cfc113_brw_flask.set_index("date")
@@ -1099,26 +1237,6 @@ plot_figure6(cfc113_data, cfc113_NEEM, 76, "cfc113", cfc113_path) #check the ove
 cfc113_data, cfc113_egrip = make_final_dataset(cfc113_data, cfc113_NEEM, final_data_directory, "CFC113")
 #plot the final dataset
 plot_figure7(cfc113_egrip, cfc113_NEEM, 77, "cfc113", cfc113_path)
-
-#%%
-df = cfc12_data
-coefficients = cfc12_coefficients
-plt.figure(1000, clear = True)
-brw_slope = coefficients["brw"]["ratio"]
-plt.plot(df["sum_anom"], brw_slope*df["sum_anom"], color = colors[4], label = "barrow line")
-plt.plot(df["sum_anom"], coefficients["brw"]["sum_v_station"]*df["sum_anom"], ls = "dashed", color = colors[4])
-plt.plot(df["sum_anom"], 1/coefficients["brw"]["station_v_sum"]*df["sum_anom"], ls = "dashed", color = colors[4])
-
-
-plt.scatter(df["sum_anom"], df["brw_anom"], color = cmap2[4], alpha = 0.7)
-
-plt.ylim(-2,2)
-
-plt.xlabel("summit")
-plt.ylabel("barrow")
-plt.legend()
-plt.title("Regression of detrended Summit Against Barrow")
-plt.grid()
 
 #%% CFC134a
 cfc134a_path = "C:\\Users\\jrobs\\OneDrive\\Documents\\USRA_2025\\Data\\cfc134a\\*.txt"
