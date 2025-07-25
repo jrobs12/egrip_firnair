@@ -774,6 +774,7 @@ def plot_figure6(df, df_NEEM, fig_num, species, final_path, alt = True):
         plt.plot(df["date"], df["alt_inf"], color = cmap2[0], label = "Alert")
     plt.plot(df["date"],df["brw_inf"], color = cmap2[4], label = "Barrow")
     plt.plot(df["date"],df["sum"], color = cmap2[5], label = "Summit")
+    plt.legend()
     
     plt.xlabel("time")
     plt.ylabel("concentration (ppm)")
