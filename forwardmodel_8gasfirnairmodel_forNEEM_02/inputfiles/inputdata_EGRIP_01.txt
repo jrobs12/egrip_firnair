@@ -1,0 +1,55 @@
+0.5 0.000005 6.8446d-9  2500. -29.07 0.0
+209 9000.  10.  745   0.0 0.1
+NEEM_densityetc_alldepths.39
+outputfolder_densityinterp
+inputfiles/NEEM_Stationary_2907_05m.txt
+inputfiles/NEEMdiff_02_snr100tau20.txt
+inputfiles/NEEM_isoT_steady_2m_k3_srms05_snr100_t01.txt
+0 0 0 0
+208.45 0
+   
+inputfiles/NEEMdiff_li6s_snr10tau10_noneg.txt
+
+dz, dzl, bdot, rh, aa, geotherm
+duration,tstep,ntprint,pressure,ustart,uscale 1.55d-5, 5.1
+critdepth1, first0, first1, first2, first3
+critdepth2, second0, second1, second2
+output folder (no /)
+input history
+input profile
+jdmin jdmax amp jbb
+tendc, al (208.537 0.01)
+
+read (26,*) dz, dzl, bdot, rh, aa, geotherm
+      read (26,*) length,tstep,ntprint,pressure,ustart,uscale
+c      read (26,*) critdepth1, first0, first1, first2
+c      read (26,*) critdepth1, first0, first1, first2, first3
+c      read (26,*) critdepth2, second0, second1, second2
+      read(26, '(A80)') zrhofile
+      read(26,'(A80)') ofolder
+      read(26,'(A80)') fileiniT
+      read(26,'(A80)') DiffFile
+      read(26,'(A80)') fThist
+      read(26,*) jdmin, jdmax, amp, jbb
+
+Variable	  	Meaning	 		Units
+
+dz			box size		m
+dzl			box size for lockin initiation, m
+bdot			accumulation	m of ice/s
+rh			ice sheet thickness, m
+aa			annual average temperature, C
+duration		model duration in years
+tstep			number of time steps per year
+ntprint			number of times per year to print (for time series)
+pressure		site pressure, mbar
+ustart			eddy diffusivity at surface, m2/s 1.6d-5
+uscale			scale depth for eddy diffusivity, m
+geotherm		geothermal gradient, deg/m
+critdepth1		critical depth for end of first stage density fit
+first0, first1, first2  coefficients for first stage density fit
+critdepth2		critical depth for end of second stage density fit
+second0, second1, second2 coefficients for second stage density fit
+tendc 	time at which to print the gases
+
+gfortran -fdefault-real-8 -O2 egrip_firn_allgas16isot02_N8g_diff.f -o firn
